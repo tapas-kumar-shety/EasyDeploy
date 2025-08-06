@@ -1,0 +1,102 @@
+pipeline {
+    agent any
+
+    tools {
+        nodejs "Node18" // Node.js for both frontend and backend
+    }
+
+    environment {
+        registryCredential = 'ecr:us-east-2:awscreds'
+        backendRegistry = "951401132355.dkr.ecr.us-east-2.amazonaws.com/myapp-backend"
+        frontendRegistry = "951401132355.dkr.ecr.us-east-2.amazonaws.com/myapp-frontend"
+        vprofileRegistry = "https://951401132355.dkr.ecr.us-east-2.amazonaws.com"
+    }
+
+    stages {
+        stage('Clone Repo') {
+            steps {
+                git branch: 'main', url: 'https://github.com/your-username/your-repo-name.git'
+            }
+        }
+
+        // ================= Backend =================
+
+        stage('Install Backend Dependencies') {
+            steps {
+                dir('backend') {
+                    sh 'npm install'
+                }
+            }
+        }
+
+        stage('Test Backend') {
+            steps {
+                dir('backend') {
+                    sh 'npm test' 
+                }
+            }
+        }
+
+        stage('Build Backend Docker Image') {
+            steps {
+                script {
+                    dockerImage = docker.build("${backendRegistry}:${BUILD_NUMBER}", "./backend")
+                }
+            }
+        }
+
+        // ================= Frontend =================
+
+        stage('Install & Build Frontend') {
+            steps {
+                dir('frontend') {
+                    sh 'npm install'
+                    sh 'npm run build'
+                }
+            }
+        }
+
+        stage('Build Frontend Docker Image') {
+            steps {
+                script {
+                    frontendImage = docker.build("${frontendRegistry}:${BUILD_NUMBER}", "./frontend")
+                }
+            }
+        }
+
+        // ================= Push to ECR =================
+
+        stage('Push Backend Image to ECR') {
+            steps {
+                script {
+                    docker.withRegistry(vprofileRegistry, registryCredential) {
+                        dockerImage.push("${BUILD_NUMBER}")
+                        dockerImage.push("latest")
+                    }
+                }
+            }
+        }
+
+        stage('Push Frontend Image to ECR') {
+            steps {
+                script {
+                    docker.withRegistry(vprofileRegistry, registryCredential) {
+                        frontendImage.push("${BUILD_NUMBER}")
+                        frontendImage.push("latest")
+                    }
+                }
+            }
+        }
+
+        // ================= Deploy to EKS =================
+
+        stage('Deploy to Kubernetes') {
+            steps {
+                withAWS(credentials: 'awscreds', region: 'us-east-2') {
+                    sh 'kubectl apply -f k8s/backend-deployment.yaml'
+                    sh 'kubectl apply -f k8s/frontend-deployment.yaml'
+                }
+            }
+        }
+    }
+}
